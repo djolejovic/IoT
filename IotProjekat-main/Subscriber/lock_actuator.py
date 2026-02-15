@@ -1,0 +1,73 @@
+import paho.mqtt.client as mqtt
+import json
+import sys 
+sys.path.append(".")
+from ssdp import *
+from udp import *
+import threading
+import os
+
+TOPIC_LOCK = "actuators/zone/lock"
+TOPIC_SHUTDOWN = "system/shutdown"
+PORT = 1883
+
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print("Aktuator kljuc: Povezan na MQTT Broker.")
+    else:
+        print(f"Greška pri povezivanju sa kodom: {rc}")
+        return 
+    
+    client.subscribe(TOPIC_LOCK)
+    print(f"Pretplacen na temu: {TOPIC_LOCK}")
+    client.subscribe(TOPIC_SHUTDOWN)
+    
+def on_message(client, userdata, msg):
+    try: 
+        json_message = msg.payload.decode('utf-8')
+        data = json.loads(json_message)
+        
+        if msg.topic == TOPIC_SHUTDOWN: 
+            print("Nisu svi uredjaji u sistemu. Pozovite administratora.")
+            os._exit(1)
+
+        is_locked = data.get("aktiviraj")
+        
+        if is_locked: 
+            print("Gradiliste je zakljucano.")
+        else: 
+            print("Gradiliste je otkljucano.")
+        
+    except json.JSONDecodeError:
+        print(" Greška u parsiranju JSON poruke.")
+        return
+    except Exception as e:
+        print(f"Došlo je do neočekivane greške: {e}")
+        return
+
+def main(): 
+    s = "urn:iot_projekat:device:actuators:1"
+    u = f"uuid:d94a1f6e-3e21-4c67-8c6f-5e0b2d91a8f3::{s}"
+    ssdp_client = SSDP(st = s, usn = u)
+    
+    broker_address = ssdp_client.serve()
+    
+    if broker_address == 0:
+        print("Nije nam se javio")
+        return 
+    
+    if not get_activation_information(): 
+        print("Na pocetnoj proveri nemamo sve potrebne elemente za nas sistem. Proverite konekcije.")
+        return
+    
+    threading.Thread(target=ssdp_client.advertise, daemon=True).start()
+
+    
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(broker_address, PORT, 60)
+    client.loop_forever()
+    
+if __name__ == "__main__":
+    main()
